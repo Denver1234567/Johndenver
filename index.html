@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Web-Based Image Notepad (GitHub Cloud)</title>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    max-width: 900px;
+    margin: auto;
+    padding: 20px;
+  }
+  input, button {
+    margin: 5px 0;
+  }
+  ul {
+    padding-left: 20px;
+  }
+  li {
+    cursor: pointer;
+    margin: 4px 0;
+  }
+  img {
+    max-width: 100%;
+    border: 1px solid #ccc;
+    padding: 5px;
+    margin-top: 10px;
+  }
+  #status {
+    margin-top: 15px;
+    font-weight: bold;
+  }
+</style>
+</head>
+
+<body>
+
+<h2>Cloud Image Notepad (GitHub Storage)</h2>
+
+<h3>Cloud Configuration</h3>
+<input id="token" type="password" placeholder="GitHub Personal Access Token" size="50"><br>
+<input id="owner" placeholder="GitHub Username">
+<input id="repo" placeholder="Repository Name">
+<input id="folder" value="images">
+
+<hr>
+
+<h3>Controls</h3>
+<button onclick="refreshImages()">Refresh List</button>
+<input type="file" id="fileInput" accept="image/*">
+<button onclick="addImage()">Add Image</button>
+
+<h3>Images in Cloud Folder</h3>
+<ul id="imageList"></ul>
+
+<div id="preview"></div>
+
+<div id="status"></div>
+
+<script>
+const API_BASE = "https://api.github.com";
+
+/* Display status messages */
+function setStatus(message, isError = false) {
+  const status = document.getElementById("status");
+  status.textContent = message;
+  status.style.color = isError ? "red" : "green";
+}
+
+/* Read configuration fields */
+function getConfig() {
+  return {
+    token: document.getElementById("token").value.trim(),
+    owner: document.getElementById("owner").value.trim(),
+    repo: document.getElementById("repo").value.trim(),
+    folder: document.getElementById("folder").value.trim()
+  };
+}
+
+/* Load list of images from GitHub folder */
+async function refreshImages() {
+  const { token, owner, repo, folder } = getConfig();
+  imageList.innerHTML = "";
+  preview.innerHTML = "";
+
+  if (!token || !owner || !repo) {
+    setStatus("Missing required configuration fields", true);
+    return;
+  }
+
+  try {
+    const res = await fetch(
+      `${API_BASE}/repos/${owner}/${repo}/contents/${folder}`,
+      { headers: { Authorization: `token ${token}` } }
+    );
+
+    if (!res.ok) {
+      throw new Error("Folder not found or access denied");
+    }
+
+    const files = await res.json();
+
+    files.forEach(file => {
+      if (file.type === "file") {
+        const li = document.createElement("li");
+        li.textContent = file.name;
+        li.onclick = () => loadImage(file.path);
+        imageList.appendChild(li);
+      }
+    });
+
+    setStatus("Image list loaded successfully");
+  } catch (err) {
+    setStatus(err.message, true);
+  }
+}
+
+/* Load and display image */
+async function loadImage(path) {
+  const { token, owner, repo } = getConfig();
+
+  try {
+    const res = await fetch(
+      `${API_BASE}/repos/${owner}/${repo}/contents/${path}`,
+      { headers: { Authorization: `token ${token}` } }
+    );
+
+    if (!res.ok) {
+      throw new Error("Image not found");
+    }
+
+    const data = await res.json();
+    preview.innerHTML = `
+      <img src="data:image/*;base64,${data.content}" alt="Image Preview">
+    `;
+
+    setStatus("Image loaded successfully");
+  } catch (err) {
+    setStatus(err.message, true);
+  }
+}
+
+/* Add or overwrite image in cloud folder */
+async function addImage() {
+  const file = document.getElementById("fileInput").files[0];
+  if (!file) {
+    setStatus("No image selected", true);
+    return;
+  }
+
+  const { token, owner, repo, folder } = getConfig();
+  const reader = new FileReader();
+
+  reader.onload = async () => {
+    const base64Content = reader.result.split(",")[1];
+    const filePath = `${folder}/${file.name}`;
+    let sha = null;
+
+    /* Check if file already exists (for overwrite) */
+    try {
+      const check = await fetch(
+        `${API_BASE}/repos/${owner}/${repo}/contents/${filePath}`,
+        { headers: { Authorization: `token ${token}` } }
+      );
+      if (check.ok) {
+        const existing = await check.json();
+        sha = existing.sha;
+      }
+    } catch (_) {}
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/repos/${owner}/${repo}/contents/${filePath}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `token ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message: `Add or update image: ${file.name}`,
+            content: base64Content,
+            sha: sha
+          })
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error("Failed to save image to cloud");
+      }
+
+      setStatus("Image saved successfully");
+      refreshImages();
+    } catch (err) {
+      setStatus(err.message, true);
+    }
+  };
+
+  reader.readAsDataURL(file);
+}
+</script>
+
+</body>
+</html>
